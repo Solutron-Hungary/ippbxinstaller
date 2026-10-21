@@ -7,7 +7,7 @@
 #
 # Non-interactive: GHCR_USER=... GHCR_TOKEN=... bash install.sh
 # Interim (lab) mode: images are pulled with a GHCR token until licence keys land.
-# Overrides: SOLUTRON_TAG (default 0.1.0, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
+# Overrides: SOLUTRON_TAG (default 0.3.0, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
 #            COSIGN_VERSION (default latest), KEEP_GHCR_LOGIN=1 (keep docker login)
 #
 # Idempotent: running it again re-verifies, re-pulls and restarts the stack.
@@ -16,8 +16,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY=ghcr.io
 IMAGE_BASE=ghcr.io/solutron-hungary/ippbxsystem
-INSTALLER_VERSION=0.2.1
-SOLUTRON_TAG=${SOLUTRON_TAG:-0.1.0}
+INSTALLER_VERSION=0.4.0
+SOLUTRON_TAG=${SOLUTRON_TAG:-0.3.0}
 ASTERISK_TAG=${ASTERISK_TAG:-24.0.0-rc2}
 COSIGN_VERSION=${COSIGN_VERSION:-latest}
 SIGNER_ID='^https://github.com/Solutron-Hungary/ippbxsystem/\.github/workflows/_image\.yml@refs/(heads/main|tags/v.*)$'
@@ -36,8 +36,9 @@ die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 trap 'printf "\nERROR: install failed at line %s (see %s)\n" "$LINENO" "$LOG" >&2' ERR
 
 [[ $EUID -eq 0 ]] || die "run as root"
+touch "$LOG" && chmod 0600 "$LOG"
 exec > >(tee -a "$LOG") 2>&1
-echo "--- solutron installer ${INSTALLER_VERSION}, $(date -Is) ---"
+echo "--- installer ${INSTALLER_VERSION}, solutron ${SOLUTRON_TAG}, asterisk ${ASTERISK_TAG}, $(date -Is) ---"
 
 # --- 1. Preflight ----------------------------------------------------------
 step "Preflight"
@@ -120,8 +121,13 @@ verify_and_pull() {
   if ! out=$(cosign verify "$ref" \
                --certificate-identity-regexp "$SIGNER_ID" \
                --certificate-oidc-issuer "$OIDC_ISSUER" 2>"$errf"); then
-    cat "$errf" >&2; rm -f "$errf"
-    die "signature verification FAILED for ${ref}"
+    cat "$errf" >&2
+    if grep -qiE "MANIFEST_UNKNOWN|tag not found" "$errf"; then
+      rm -f "$errf"
+      die "${ref} does not exist in the registry (version not released yet, or a typo in the tag)"
+    fi
+    rm -f "$errf"
+    die "signature verification FAILED for ${ref}: not signed by the Solutron release pipeline"
   fi
   rm -f "$errf"
   digest=$(jq -r '.[0].critical.image."docker-manifest-digest"' <<<"$out")
@@ -146,7 +152,9 @@ mkdir -p "${SRV}/asterisk/etc" \
 
 # Seed the Asterisk config from the image baseline, only on first install:
 # from here on Solutron owns this directory.
+fresh=0
 if [[ -z $(ls -A "${SRV}/asterisk/etc") ]]; then
+  fresh=1
   docker run --rm --entrypoint tar "$ASTERISK_IMAGE" -C /etc/asterisk -cf - . \
     | tar -xf - -C "${SRV}/asterisk/etc"
   # Keep astdb out of /var/lib/asterisk so sounds keep coming from the image.
@@ -159,7 +167,7 @@ find "${SRV}/asterisk/etc" -type f -exec chmod 0640 {} +
 chown -R "$AST_UID":"$AST_UID" "${DATA}/asterisk"
 
 # Model (YAML, secrets.yaml inside) and revision snapshots: Solutron only.
-install -d -m 0700 -o root -g root "${SRV}/model" "${SRV}/revisions"
+install -d -m 0700 -o root -g root "${SRV}/model" "${SRV}/revisions" "${SRV}/state"
 
 # --- 7. Compose -------------------------------------------------------------
 step "Compose"
@@ -213,6 +221,12 @@ health=$(curl -fsS http://127.0.0.1:8080/api/v1/health) || die "solutron API not
 echo "ok: solutron $(jq -r '.version.version' <<<"$health") ($(jq -r '.version.commit' <<<"$health" | cut -c1-12))"
 
 ip=$(hostname -I | awk '{print $1}')
+# Admin password for the GUI: generated once, never overwritten here.
+admin_pw=$(docker exec solutron-app /usr/local/bin/solutron set-admin-password -if-missing || true)
+# The GUI greets the first visitor after a fresh install, once.
+if (( fresh )); then
+  echo "$ip" > "${SRV}/state/install-done"
+fi
 cat <<EOF
 
 Solutron is up.
@@ -222,3 +236,17 @@ Solutron is up.
   Compose:  ${SRV}/compose.yml
   Log:      ${LOG}
 EOF
+if [[ -n $admin_pw ]]; then
+  # The password must not reach the install log: straight to the terminal,
+  # or (non-interactive run) to a root-only file whose path is logged.
+  msg="
+  GUI admin password: ${admin_pw}
+  Save it now; it is not shown again. To set a new one:
+    docker exec solutron-app /usr/local/bin/solutron set-admin-password"
+  if { true > /dev/tty; } 2>/dev/null; then
+    printf '%s\n' "$msg" > /dev/tty
+  else
+    (umask 077; printf '%s\n' "$msg" > "${SRV}/state/initial-admin-password")
+    echo "GUI admin password written to ${SRV}/state/initial-admin-password (root only); delete it after reading."
+  fi
+fi

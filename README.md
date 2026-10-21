@@ -28,7 +28,11 @@ A telepítő bekéri a GitHub-felhasználónevet és a tokent. Nem interaktív f
 GHCR_USER=... GHCR_TOKEN=... bash install.sh
 ```
 
-A végén kiírja a webes felület címét: `http://<host-ip>:8080/`.
+A végén kiírja a webes felület címét (`http://<host-ip>:8080/`), friss telepítésnél pedig az admin-jelszót is. Ezt mentsd el, többször nem jelenik meg. Új jelszó beállítása:
+
+```sh
+docker exec solutron-app /usr/local/bin/solutron set-admin-password
+```
 
 ## Mit csinál
 
@@ -45,7 +49,7 @@ A végén kiírja a webes felület címét: `http://<host-ip>:8080/`.
 
 | Változó | Alapérték | Jelentés |
 | --- | --- | --- |
-| `SOLUTRON_TAG` | `0.1.0` | Solutron-verzió (image tag); `main` a legfrissebb fejlesztői build |
+| `SOLUTRON_TAG` | `0.3.0` | Solutron-verzió (image tag); `main` a legfrissebb fejlesztői build |
 | `ASTERISK_TAG` | `24.0.0-rc2` | Asterisk image tag |
 | `COSIGN_VERSION` | `latest` | cosign kiadás, pl. `v2.5.0` |
 | `KEEP_GHCR_LOGIN` | `0` | `1` esetén a registry-belépés megmarad a hoston |
