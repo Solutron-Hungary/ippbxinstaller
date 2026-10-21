@@ -45,7 +45,7 @@ A végén kiírja a webes felület címét: `http://<host-ip>:8080/`.
 
 | Változó | Alapérték | Jelentés |
 | --- | --- | --- |
-| `SOLUTRON_TAG` | `main` | Solutron image tag |
+| `SOLUTRON_TAG` | `0.1.0` | Solutron-verzió (image tag); `main` a legfrissebb fejlesztői build |
 | `ASTERISK_TAG` | `24.0.0-rc2` | Asterisk image tag |
 | `COSIGN_VERSION` | `latest` | cosign kiadás, pl. `v2.5.0` |
 | `KEEP_GHCR_LOGIN` | `0` | `1` esetén a registry-belépés megmarad a hoston |
