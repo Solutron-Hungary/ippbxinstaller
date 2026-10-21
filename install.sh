@@ -16,7 +16,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY=ghcr.io
 IMAGE_BASE=ghcr.io/solutron-hungary/ippbxsystem
-INSTALLER_VERSION=0.1.0
+INSTALLER_VERSION=0.2.0
 SOLUTRON_TAG=${SOLUTRON_TAG:-main}
 ASTERISK_TAG=${ASTERISK_TAG:-24.0.0-rc2}
 COSIGN_VERSION=${COSIGN_VERSION:-latest}
@@ -134,6 +134,7 @@ SOLUTRON_IMAGE=$(verify_and_pull "${IMAGE_BASE}/solutron:${SOLUTRON_TAG}")
 echo "ok: ${ASTERISK_IMAGE}"
 echo "ok: ${SOLUTRON_IMAGE}"
 
+
 if [[ ${KEEP_GHCR_LOGIN:-0} != 1 ]]; then
   docker logout "$REGISTRY" >/dev/null   # credentials sit unencrypted in /root/.docker otherwise
 fi
@@ -156,6 +157,9 @@ chown -R root:"$AST_UID" "${SRV}/asterisk/etc"
 find "${SRV}/asterisk/etc" -type d -exec chmod 0750 {} +
 find "${SRV}/asterisk/etc" -type f -exec chmod 0640 {} +
 chown -R "$AST_UID":"$AST_UID" "${DATA}/asterisk"
+
+# Model (YAML, secrets.yaml inside) and revision snapshots: Solutron only.
+install -d -m 0700 -o root -g root "${SRV}/model" "${SRV}/revisions"
 
 # --- 7. Compose -------------------------------------------------------------
 step "Compose"
@@ -180,8 +184,17 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    # Solutron manages the host: it renders into ${SRV}, starts lab containers
+    # and reloads Asterisk through the Docker socket. The socket is root-
+    # equivalent anyway, so it runs as root with only the capability to chown
+    # the Asterisk config to the asterisk group.
+    user: "0:0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SRV}:${SRV}
     read_only: true
     cap_drop: [ALL]
+    cap_add: [CHOWN]
     security_opt: ["no-new-privileges:true"]
 EOF
 docker compose -f "${SRV}/compose.yml" up -d --remove-orphans
