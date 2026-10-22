@@ -7,8 +7,9 @@
 #
 # Non-interactive: GHCR_USER=... GHCR_TOKEN=... bash install.sh
 # Interim (lab) mode: images are pulled with a GHCR token until licence keys land.
-# Overrides: SOLUTRON_TAG (default 0.4.0, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
-#            COSIGN_VERSION (default latest), KEEP_GHCR_LOGIN=1 (keep docker login)
+# Overrides: SOLUTRON_TAG (default 0.5.0, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
+#            COSIGN_VERSION (default latest), KEEP_GHCR_LOGIN=1 (keep docker login),
+#            POSTGRES_IMAGE (default postgres:17-bookworm; pinned by digest on first install)
 #
 # Idempotent: running it again re-verifies, re-pulls and restarts the stack.
 set -euo pipefail
@@ -16,9 +17,10 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY=ghcr.io
 IMAGE_BASE=ghcr.io/solutron-hungary/ippbxsystem
-INSTALLER_VERSION=0.5.0
-SOLUTRON_TAG=${SOLUTRON_TAG:-0.4.0}
+INSTALLER_VERSION=0.6.0
+SOLUTRON_TAG=${SOLUTRON_TAG:-0.5.0}
 ASTERISK_TAG=${ASTERISK_TAG:-24.0.0-rc2}
+POSTGRES_TAG=postgres:17-bookworm
 COSIGN_VERSION=${COSIGN_VERSION:-latest}
 SIGNER_ID='^https://github.com/Solutron-Hungary/ippbxsystem/\.github/workflows/_image\.yml@refs/(heads/main|tags/v.*)$'
 OIDC_ISSUER=https://token.actions.githubusercontent.com
@@ -140,6 +142,24 @@ SOLUTRON_IMAGE=$(verify_and_pull "${IMAGE_BASE}/solutron:${SOLUTRON_TAG}")
 echo "ok: ${ASTERISK_IMAGE}"
 echo "ok: ${SOLUTRON_IMAGE}"
 
+# PostgreSQL for CDR and the queue log: the official image, not signed by us.
+# The first install pins the digest it pulled; later runs reuse that exact
+# image until POSTGRES_IMAGE asks for another one.
+mkdir -p "${SRV}/postgres"
+pin_file="${SRV}/postgres/image"
+if [[ -n ${POSTGRES_IMAGE:-} ]]; then
+  pg_ref=$POSTGRES_IMAGE
+elif [[ -s $pin_file ]]; then
+  pg_ref=$(cat "$pin_file")
+else
+  pg_ref=$POSTGRES_TAG
+fi
+docker pull -q "$pg_ref" >/dev/null || die "cannot pull ${pg_ref}"
+POSTGRES_IMAGE=$(docker image inspect -f '{{index .RepoDigests 0}}' "$pg_ref")
+[[ $POSTGRES_IMAGE == *@sha256:* ]] || die "no digest for ${pg_ref}"
+echo "$POSTGRES_IMAGE" > "$pin_file"
+echo "ok: ${POSTGRES_IMAGE}"
+
 
 if [[ ${KEEP_GHCR_LOGIN:-0} != 1 ]]; then
   docker logout "$REGISTRY" >/dev/null   # credentials sit unencrypted in /root/.docker otherwise
@@ -148,7 +168,8 @@ fi
 # --- 6. Filesystem layout ---------------------------------------------------
 step "Filesystem"
 mkdir -p "${SRV}/asterisk/etc" \
-         "${DATA}/asterisk/astdb" "${DATA}/asterisk/spool" "${DATA}/asterisk/log"
+         "${DATA}/asterisk/astdb" "${DATA}/asterisk/spool/monitor/solutron" "${DATA}/asterisk/log" \
+         "${DATA}/asterisk/sounds/moh" "${DATA}/postgres"
 
 # Seed the Asterisk config from the image baseline, only on first install:
 # from here on Solutron owns this directory.
@@ -165,9 +186,63 @@ chown -R root:"$AST_UID" "${SRV}/asterisk/etc"
 find "${SRV}/asterisk/etc" -type d -exec chmod 0750 {} +
 find "${SRV}/asterisk/etc" -type f -exec chmod 0640 {} +
 chown -R "$AST_UID":"$AST_UID" "${DATA}/asterisk"
+chmod 0750 "${DATA}/asterisk/sounds" "${DATA}/asterisk/sounds/moh"
 
 # Model (YAML, secrets.yaml inside) and revision snapshots: Solutron only.
 install -d -m 0700 -o root -g root "${SRV}/model" "${SRV}/revisions" "${SRV}/state"
+
+# Database password: generated once. Solutron copies it into the model
+# (secrets.yaml) at start; PostgreSQL gets it from a root-only env file.
+if [[ ! -s ${SRV}/state/db-password ]]; then
+  (umask 077; head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32 > "${SRV}/state/db-password")
+fi
+(umask 077; printf 'POSTGRES_USER=solutron\nPOSTGRES_DB=solutron\nPOSTGRES_PASSWORD=%s\n' "$(cat "${SRV}/state/db-password")" > "${SRV}/postgres/env")
+
+# Schema for Asterisk's cdr_pgsql and the realtime queue log. Runs only when
+# the database directory is empty (first start).
+cat > "${SRV}/postgres/init.sql" <<'SQL'
+CREATE TABLE IF NOT EXISTS cdr (
+  calldate    timestamptz NOT NULL DEFAULT now(),
+  clid        text NOT NULL DEFAULT '',
+  src         text NOT NULL DEFAULT '',
+  dst         text NOT NULL DEFAULT '',
+  dcontext    text NOT NULL DEFAULT '',
+  channel     text NOT NULL DEFAULT '',
+  dstchannel  text NOT NULL DEFAULT '',
+  lastapp     text NOT NULL DEFAULT '',
+  lastdata    text NOT NULL DEFAULT '',
+  duration    integer NOT NULL DEFAULT 0,
+  billsec     integer NOT NULL DEFAULT 0,
+  disposition text NOT NULL DEFAULT '',
+  amaflags    integer NOT NULL DEFAULT 0,
+  accountcode text NOT NULL DEFAULT '',
+  uniqueid    text NOT NULL DEFAULT '',
+  userfield   text NOT NULL DEFAULT '',
+  peeraccount text NOT NULL DEFAULT '',
+  linkedid    text NOT NULL DEFAULT '',
+  sequence    integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS cdr_calldate ON cdr (calldate);
+CREATE INDEX IF NOT EXISTS cdr_uniqueid ON cdr (uniqueid);
+CREATE INDEX IF NOT EXISTS cdr_accountcode ON cdr (accountcode);
+CREATE TABLE IF NOT EXISTS queue_log (
+  id        bigserial PRIMARY KEY,
+  time      timestamptz NOT NULL DEFAULT now(),
+  callid    text NOT NULL DEFAULT '',
+  queuename text NOT NULL DEFAULT '',
+  agent     text NOT NULL DEFAULT '',
+  event     text NOT NULL DEFAULT '',
+  data      text NOT NULL DEFAULT '',
+  data1     text NOT NULL DEFAULT '',
+  data2     text NOT NULL DEFAULT '',
+  data3     text NOT NULL DEFAULT '',
+  data4     text NOT NULL DEFAULT '',
+  data5     text NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS queue_log_time ON queue_log (time);
+CREATE INDEX IF NOT EXISTS queue_log_callid ON queue_log (callid);
+SQL
+chmod 0644 "${SRV}/postgres/init.sql"
 
 # --- 7. Compose -------------------------------------------------------------
 step "Compose"
@@ -185,6 +260,25 @@ services:
       - ${DATA}/asterisk/astdb:/var/lib/asterisk/astdb
       - ${DATA}/asterisk/spool:/var/spool/asterisk
       - ${DATA}/asterisk/log:/var/log/asterisk
+      - ${DATA}/asterisk/sounds:/var/lib/asterisk/sounds/solutron
+    depends_on: [postgres]
+
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    container_name: solutron-postgres
+    restart: unless-stopped
+    env_file: ${SRV}/postgres/env
+    # Only the host itself: Asterisk (host network) and Solutron reach it here.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ${DATA}/postgres:/var/lib/postgresql/data
+      - ${SRV}/postgres/init.sql:/docker-entrypoint-initdb.d/10-solutron.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "solutron", "-d", "solutron"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   solutron:
     image: ${SOLUTRON_IMAGE}
@@ -200,6 +294,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SRV}:${SRV}
+      # Prompts and music (GUI uploads), recordings (retention).
+      - ${DATA}/asterisk/sounds:${DATA}/asterisk/sounds
+      - ${DATA}/asterisk/spool:${DATA}/asterisk/spool
     read_only: true
     cap_drop: [ALL]
     cap_add: [CHOWN]
@@ -215,6 +312,13 @@ for i in $(seq 1 60); do
   (( i == 60 )) && { docker logs --tail 50 solutron-asterisk; die "asterisk not healthy after 120s ($status)"; }
   sleep 2
 done
+for i in $(seq 1 30); do
+  pgs=$(docker inspect -f '{{.State.Health.Status}}' solutron-postgres 2>/dev/null || echo starting)
+  [[ $pgs == healthy ]] && break
+  (( i == 30 )) && { docker logs --tail 30 solutron-postgres; die "postgres not healthy after 60s ($pgs)"; }
+  sleep 2
+done
+echo "ok: postgres healthy"
 echo "ok: asterisk healthy ($(docker exec solutron-asterisk asterisk -rx 'core show version' | awk '{print $1, $2}'))"
 
 health=$(curl -fsS http://127.0.0.1:8080/api/v1/health) || die "solutron API not answering"
