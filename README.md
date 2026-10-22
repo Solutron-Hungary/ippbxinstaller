@@ -28,7 +28,7 @@ A telepítő bekéri a GitHub-felhasználónevet és a tokent. Nem interaktív f
 GHCR_USER=... GHCR_TOKEN=... bash install.sh
 ```
 
-A végén kiírja a webes felület címét (`http://<host-ip>:8080/`), friss telepítésnél pedig az admin-jelszót is. Ezt mentsd el, többször nem jelenik meg. Új jelszó beállítása:
+A végén kiírja a webes felület címét (`http://<host-ip>:8080/`), friss telepítésnél pedig a belépési adatokat is (felhasználó: `admin`). Újrafuttatáskor a meglévő jelszó marad, ezt is jelzi. Ezt mentsd el, többször nem jelenik meg. Új jelszó beállítása:
 
 ```sh
 docker exec solutron-app /usr/local/bin/solutron set-admin-password
@@ -49,7 +49,7 @@ docker exec solutron-app /usr/local/bin/solutron set-admin-password
 
 | Változó | Alapérték | Jelentés |
 | --- | --- | --- |
-| `SOLUTRON_TAG` | `0.3.1` | Solutron-verzió (image tag); `main` a legfrissebb fejlesztői build |
+| `SOLUTRON_TAG` | `0.4.0` | Solutron-verzió (image tag); `main` a legfrissebb fejlesztői build |
 | `ASTERISK_TAG` | `24.0.0-rc2` | Asterisk image tag |
 | `COSIGN_VERSION` | `latest` | cosign kiadás, pl. `v2.5.0` |
 | `KEEP_GHCR_LOGIN` | `0` | `1` esetén a registry-belépés megmarad a hoston |
@@ -65,3 +65,5 @@ cosign verify ghcr.io/solutron-hungary/ippbxsystem/asterisk:24.0.0-rc2 \
 ## Licenc
 
 A telepítőszkript MIT licencű (lásd `LICENSE`). A Solutron szoftver nem nyílt forrású; a telepített Asterisk-image GPL-es összetevőinek forrását a kiadások mellett tesszük közzé.
+
+Első belépés után a felület az **Első beállítás** oldalra visz: a gép hálózatát (interfész, cím, átjáró, DNS) felismeri és előre kitölti, neked csak a melléktartományt és az időzónát kell ellenőrizned.

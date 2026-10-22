@@ -7,7 +7,7 @@
 #
 # Non-interactive: GHCR_USER=... GHCR_TOKEN=... bash install.sh
 # Interim (lab) mode: images are pulled with a GHCR token until licence keys land.
-# Overrides: SOLUTRON_TAG (default 0.3.1, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
+# Overrides: SOLUTRON_TAG (default 0.4.0, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
 #            COSIGN_VERSION (default latest), KEEP_GHCR_LOGIN=1 (keep docker login)
 #
 # Idempotent: running it again re-verifies, re-pulls and restarts the stack.
@@ -16,8 +16,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY=ghcr.io
 IMAGE_BASE=ghcr.io/solutron-hungary/ippbxsystem
-INSTALLER_VERSION=0.4.1
-SOLUTRON_TAG=${SOLUTRON_TAG:-0.3.1}
+INSTALLER_VERSION=0.5.0
+SOLUTRON_TAG=${SOLUTRON_TAG:-0.4.0}
 ASTERISK_TAG=${ASTERISK_TAG:-24.0.0-rc2}
 COSIGN_VERSION=${COSIGN_VERSION:-latest}
 SIGNER_ID='^https://github.com/Solutron-Hungary/ippbxsystem/\.github/workflows/_image\.yml@refs/(heads/main|tags/v.*)$'
@@ -221,8 +221,13 @@ health=$(curl -fsS http://127.0.0.1:8080/api/v1/health) || die "solutron API not
 echo "ok: solutron $(jq -r '.version.version' <<<"$health") ($(jq -r '.version.commit' <<<"$health" | cut -c1-12))"
 
 ip=$(hostname -I | awk '{print $1}')
-# Admin password for the GUI: generated once, never overwritten here.
-admin_pw=$(docker exec solutron-app /usr/local/bin/solutron set-admin-password -if-missing || true)
+# Admin password for the GUI: generated once, never overwritten here. On a
+# re-run the password already exists and the command prints nothing.
+admin_pw=""
+pw_state=failed
+if admin_pw=$(docker exec solutron-app /usr/local/bin/solutron set-admin-password -if-missing); then
+  if [[ -n $admin_pw ]]; then pw_state=new; else pw_state=kept; fi
+fi
 # The GUI greets the first visitor after a fresh install, once.
 if (( fresh )); then
   echo "$ip" > "${SRV}/state/install-done"
@@ -236,13 +241,22 @@ Solutron is up.
   Compose:  ${SRV}/compose.yml
   Log:      ${LOG}
 EOF
-if [[ -n $admin_pw ]]; then
+reset_cmd="docker exec solutron-app /usr/local/bin/solutron set-admin-password"
+case $pw_state in
+  kept)
+    printf '\n  GUI login: user "admin", password unchanged (set by an earlier install).\n  To set a new one: %s\n' "$reset_cmd"
+    ;;
+  failed)
+    printf '\n  WARNING: could not check the GUI admin password. Set one with:\n    %s\n' "$reset_cmd"
+    ;;
+esac
+if [[ $pw_state == new ]]; then
   # The password must not reach the install log: straight to the terminal,
   # or (non-interactive run) to a root-only file whose path is logged.
   msg="
-  GUI admin password: ${admin_pw}
+  GUI login: user \"admin\", password: ${admin_pw}
   Save it now; it is not shown again. To set a new one:
-    docker exec solutron-app /usr/local/bin/solutron set-admin-password"
+    ${reset_cmd}"
   if { true > /dev/tty; } 2>/dev/null; then
     printf '%s\n' "$msg" > /dev/tty
   else
