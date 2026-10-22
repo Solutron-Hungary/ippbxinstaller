@@ -7,7 +7,7 @@
 #
 # Non-interactive: GHCR_USER=... GHCR_TOKEN=... bash install.sh
 # Interim (lab) mode: images are pulled with a GHCR token until licence keys land.
-# Overrides: SOLUTRON_TAG (default 0.5.0, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
+# Overrides: SOLUTRON_TAG (default 0.5.1, "main" for the latest dev build), ASTERISK_TAG (default 24.0.0-rc2),
 #            COSIGN_VERSION (default latest), KEEP_GHCR_LOGIN=1 (keep docker login),
 #            POSTGRES_IMAGE (default postgres:17-bookworm; pinned by digest on first install)
 #
@@ -17,8 +17,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY=ghcr.io
 IMAGE_BASE=ghcr.io/solutron-hungary/ippbxsystem
-INSTALLER_VERSION=0.6.0
-SOLUTRON_TAG=${SOLUTRON_TAG:-0.5.0}
+INSTALLER_VERSION=0.6.1
+SOLUTRON_TAG=${SOLUTRON_TAG:-0.5.1}
 ASTERISK_TAG=${ASTERISK_TAG:-24.0.0-rc2}
 POSTGRES_TAG=postgres:17-bookworm
 COSIGN_VERSION=${COSIGN_VERSION:-latest}
