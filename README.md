@@ -50,7 +50,7 @@ docker exec solutron-app /usr/local/bin/solutron set-admin-password
 | Változó | Alapérték | Jelentés |
 | --- | --- | --- |
 | `POSTGRES_IMAGE` | `postgres:17-bookworm` | A CDR- és sornapló-adatbázis image-e. Az első telepítés a letöltött digestet rögzíti (`/srv/solutron/postgres/image`), az újrafuttatás ugyanazt használja. |
-| `SOLUTRON_TAG` | `0.5.1` | Solutron-verzió (image tag); `main` a legfrissebb fejlesztői build |
+| `SOLUTRON_TAG` | `0.5.2` | Solutron-verzió (image tag); `main` a legfrissebb fejlesztői build |
 | `ASTERISK_TAG` | `24.0.0-rc2` | Asterisk image tag |
 | `COSIGN_VERSION` | `latest` | cosign kiadás, pl. `v2.5.0` |
 | `KEEP_GHCR_LOGIN` | `0` | `1` esetén a registry-belépés megmarad a hoston |

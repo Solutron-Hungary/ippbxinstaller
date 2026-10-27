@@ -17,8 +17,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY=ghcr.io
 IMAGE_BASE=ghcr.io/solutron-hungary/ippbxsystem
-INSTALLER_VERSION=0.6.1
-SOLUTRON_TAG=${SOLUTRON_TAG:-0.5.1}
+INSTALLER_VERSION=0.6.2
+SOLUTRON_TAG=${SOLUTRON_TAG:-0.5.2}
 ASTERISK_TAG=${ASTERISK_TAG:-24.0.0-rc2}
 POSTGRES_TAG=postgres:17-bookworm
 COSIGN_VERSION=${COSIGN_VERSION:-latest}
@@ -168,7 +168,7 @@ fi
 # --- 6. Filesystem layout ---------------------------------------------------
 step "Filesystem"
 mkdir -p "${SRV}/asterisk/etc" \
-         "${DATA}/asterisk/astdb" "${DATA}/asterisk/spool/monitor/solutron" "${DATA}/asterisk/log" \
+         "${DATA}/asterisk/astdb" "${DATA}/asterisk/spool/monitor/solutron" "${DATA}/asterisk/log/cdr-csv" \
          "${DATA}/asterisk/sounds/moh" "${DATA}/postgres"
 
 # Seed the Asterisk config from the image baseline, only on first install:
